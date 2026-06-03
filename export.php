@@ -25,17 +25,13 @@ if (empty($attachments)) {
 $zip_path = sys_get_temp_dir() . "/ticket_{$ticket_id}_export.zip";
 
 // Build the file list for zip. Use basename() to prevent path traversal.
-// basename() strips directory components, making filenames safe... right?
 $file_list = '';
 foreach ($attachments as $att) {
-    $safe_name = basename($att['stored_name']);   // strips ../../ etc.
+    $safe_name = basename($att['stored_name']);
     $full_path = '/var/uploads/' . $safe_name;
     $file_list .= ' ' . $full_path;
 }
 
-// BUG: basename() prevents path traversal but does NOT strip shell metacharacters.
-// A stored_name like "report.pdf; id" becomes "report.pdf; id" after basename(),
-// and that semicolon executes a second shell command.
 $cmd = "zip -j {$zip_path}{$file_list}";
 system($cmd);
 
