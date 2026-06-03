@@ -52,6 +52,14 @@ $pdo->exec("
     );
 ");
 
+$pdo->exec("CREATE TABLE IF NOT EXISTS canned_responses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    body TEXT NOT NULL,
+    created_by INTEGER REFERENCES users(id),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)");
+
 // Seed admin user if no users exist
 $count = $pdo->query("SELECT COUNT(*) FROM users")->fetchColumn();
 if ($count == 0) {
