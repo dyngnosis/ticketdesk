@@ -36,6 +36,7 @@
                 <li class="nav-item"><a class="nav-link" href="/tickets.php?action=new"><i class="bi bi-plus-circle"></i> New Ticket</a></li>
                 <?php if (isAdmin()): ?>
                 <li class="nav-item"><a class="nav-link" href="/admin.php"><i class="bi bi-shield-lock"></i> Admin</a></li>
+                <li class="nav-item"><a class="nav-link" href="/canned_responses.php"><i class="bi bi-lightning"></i> Canned Responses</a></li>
                 <?php endif; ?>
                 <?php endif; ?>
             </ul>

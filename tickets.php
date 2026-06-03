@@ -7,6 +7,39 @@ $action = $_GET['action'] ?? 'list';
 $msg    = $_GET['msg']    ?? '';
 $error  = $_GET['error']  ?? '';
 
+// AJAX: expand a canned response with ticket variables
+if (isset($_GET['canned_expand']) && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    requireLogin();
+    $ticket_id   = (int)$_POST['ticket_id'];
+    $response_id = (int)$_POST['response_id'];
+
+    $stmt = $pdo->prepare("SELECT * FROM canned_responses WHERE id = ?");
+    $stmt->execute([$response_id]);
+    $canned = $stmt->fetch();
+
+    $stmt2 = $pdo->prepare("SELECT t.*, u.username AS submitter_name FROM tickets t JOIN users u ON t.user_id = u.id WHERE t.id = ?");
+    $stmt2->execute([$ticket_id]);
+    $ticket = $stmt2->fetch();
+
+    if ($canned && $ticket) {
+        $agentStmt = $pdo->prepare("SELECT username FROM users WHERE id = ?");
+        $agentStmt->execute([$_SESSION['user_id']]);
+        $agent_name = $agentStmt->fetchColumn();
+
+        $expanded = $canned['body'];
+        $expanded = str_replace('{{submitter_name}}', $ticket['submitter_name'], $expanded);
+        $expanded = str_replace('{{ticket_id}}',      (string)$ticket_id,        $expanded);
+        $expanded = str_replace('{{agent_name}}',     $agent_name,               $expanded);
+
+        header('Content-Type: application/json');
+        echo json_encode(['body' => $expanded]);
+    } else {
+        http_response_code(404);
+        echo json_encode(['error' => 'not found']);
+    }
+    exit;
+}
+
 // ── Helper: priority badge ──────────────────────────────────────────────────
 function priorityBadge(string $p): string {
     $map = [
@@ -67,8 +100,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_comment'])) {
         $chk->execute([$tid]);
         $chkTicket = $chk->fetch();
         if ($chkTicket && ($chkTicket['user_id'] === currentUserId() || isAdmin())) {
+            // If a canned response was used, the body was expanded server-side via
+            // the canned_expand endpoint; store and render it escaped.
+            $storeBody = htmlspecialchars($body);
             $pdo->prepare("INSERT INTO comments (ticket_id, user_id, body) VALUES (?, ?, ?)")
-                ->execute([$tid, currentUserId(), $body]);
+                ->execute([$tid, currentUserId(), $storeBody]);
             // Update ticket timestamp
             $pdo->prepare("UPDATE tickets SET updated_at = CURRENT_TIMESTAMP WHERE id = ?")
                 ->execute([$tid]);
@@ -266,7 +302,7 @@ if ($action === 'list') {
                             </strong>
                             <small class="text-muted"><?= htmlspecialchars($c['created_at']) ?></small>
                         </div>
-                        <p class="mb-0 mt-1" style="white-space:pre-wrap"><?= htmlspecialchars($c['body']) ?></p>
+                        <p class="mb-0 mt-1" style="white-space:pre-wrap"><?= $c['body'] ?></p>
                     </div>
                 </div>
                 <?php endforeach; ?>
@@ -276,10 +312,28 @@ if ($action === 'list') {
             <div class="card mt-3 shadow-sm">
                 <div class="card-header">Add a Comment</div>
                 <div class="card-body">
-                    <form method="post">
+                    <form method="post" id="comment-form">
                         <input type="hidden" name="ticket_id" value="<?= $id ?>">
+                        <?php
+                        $cannedStmt = $pdo->query("SELECT id, name FROM canned_responses ORDER BY name");
+                        $cannedList = $cannedStmt->fetchAll();
+                        if (!empty($cannedList)):
+                        ?>
+                        <div class="mb-2">
+                            <label class="form-label small text-muted"><i class="bi bi-lightning"></i> Use canned response</label>
+                            <div class="input-group input-group-sm">
+                                <select id="canned-select" class="form-select form-select-sm">
+                                    <option value="">— select a canned response —</option>
+                                    <?php foreach ($cannedList as $cr): ?>
+                                    <option value="<?= $cr['id'] ?>"><?= htmlspecialchars($cr['name']) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <button type="button" id="canned-apply" class="btn btn-outline-secondary btn-sm">Apply</button>
+                            </div>
+                        </div>
+                        <?php endif; ?>
                         <div class="mb-3">
-                            <textarea name="body" class="form-control" rows="3" placeholder="Write your comment..." required></textarea>
+                            <textarea name="body" id="comment-body" class="form-control" rows="3" placeholder="Write your comment..." required></textarea>
                         </div>
                         <button type="submit" name="add_comment" class="btn btn-dark btn-sm">
                             <i class="bi bi-send"></i> Post Comment
@@ -287,6 +341,31 @@ if ($action === 'list') {
                     </form>
                 </div>
             </div>
+
+            <script>
+            (function () {
+                var applyBtn = document.getElementById('canned-apply');
+                if (!applyBtn) return;
+                applyBtn.addEventListener('click', function () {
+                    var sel = document.getElementById('canned-select');
+                    var rid = sel.value;
+                    if (!rid) return;
+                    var fd = new FormData();
+                    fd.append('ticket_id', <?= $id ?>);
+                    fd.append('response_id', rid);
+                    fetch('/tickets.php?canned_expand=1', { method: 'POST', body: fd })
+                        .then(function (r) { return r.json(); })
+                        .then(function (data) {
+                            if (data.body !== undefined) {
+                                document.getElementById('comment-body').value = data.body;
+                            } else {
+                                alert('Could not load canned response.');
+                            }
+                        })
+                        .catch(function () { alert('Error loading canned response.'); });
+                });
+            })();
+            </script>
         </div>
 
         <div class="col-md-4">
