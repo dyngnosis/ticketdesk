@@ -1,0 +1,23 @@
+# SQLite database
+/var/data/
+*.sqlite
+*.sqlite3
+*.db
+
+# Uploads
+/var/uploads/
+uploads_temp/
+
+# PHP logs
+*.log
+error_log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor directories
+.idea/
+.vscode/
+*.swp
+*.swo

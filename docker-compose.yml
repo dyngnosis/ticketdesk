@@ -1,0 +1,15 @@
+version: '3.9'
+
+services:
+  ticketdesk:
+    build: .
+    ports:
+      - "3002:3002"
+    volumes:
+      - uploads_data:/var/uploads
+      - db_data:/var/data
+    restart: unless-stopped
+
+volumes:
+  uploads_data:
+  db_data:
