@@ -15,8 +15,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_ticket'])) {
     $allowed_statuses = ['open', 'in-progress', 'resolved', 'closed'];
     if (!in_array($status, $allowed_statuses)) $status = 'open';
 
+    // Fetch current values before update so we can record what changed.
+    $prev = $pdo->prepare("SELECT status, assigned_to FROM tickets WHERE id = ?");
+    $prev->execute([$tid]);
+    $prev = $prev->fetch();
+
     $pdo->prepare("UPDATE tickets SET status = ?, assigned_to = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
         ->execute([$status, $assigned ?: null, $tid]);
+
+    if ($prev) {
+        if ($prev['status'] !== $status) {
+            writeAuditEntry($pdo, $tid, currentUserId(), 'status_change', $prev['status'], $status);
+        }
+        $prevAssigned = (int)($prev['assigned_to'] ?? 0);
+        if ($prevAssigned !== ($assigned ?: 0)) {
+            writeAuditEntry($pdo, $tid, currentUserId(), 'assignment_change', (string)$prevAssigned, (string)($assigned ?: 0));
+        }
+    }
 
     header("Location: /admin.php?section=tickets&msg=updated");
     exit;
@@ -251,6 +266,10 @@ $agents = $pdo->query("SELECT id, username FROM users WHERE role = 'admin' ORDER
                                     data-assigned="<?= (int)$t['assigned_to'] ?>">
                                 <i class="bi bi-pencil-square"></i>
                             </button>
+                            <a href="/ticket_audit.php?ticket_id=<?= $t['id'] ?>"
+                               class="btn btn-sm btn-outline-secondary ms-1" title="View audit trail">
+                                <i class="bi bi-clock-history"></i>
+                            </a>
                         </td>
                     </tr>
                 <?php endforeach; ?>

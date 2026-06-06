@@ -50,6 +50,16 @@ $pdo->exec("
         size INTEGER,
         uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS ticket_audit (
+        id INTEGER PRIMARY KEY,
+        ticket_id INTEGER NOT NULL,
+        agent_id INTEGER NOT NULL,
+        action TEXT NOT NULL,
+        old_value TEXT,
+        new_value TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
 ");
 
 // Seed admin user if no users exist
@@ -58,4 +68,20 @@ if ($count == 0) {
     $hash = password_hash('admin123', PASSWORD_BCRYPT);
     $pdo->prepare("INSERT INTO users (username, password, email, role) VALUES (?, ?, ?, ?)")
         ->execute(['admin', $hash, 'admin@ticketdesk.local', 'admin']);
+}
+
+/**
+ * Append a row to ticket_audit.
+ *
+ * @param PDO    $pdo
+ * @param int    $ticket_id
+ * @param int    $agent_id   User performing the change.
+ * @param string $action     E.g. 'status_change', 'assignment_change', 'priority_change'.
+ * @param string $old_value  Previous value (empty string if not applicable).
+ * @param string $new_value  New value.
+ */
+function writeAuditEntry(PDO $pdo, int $ticket_id, int $agent_id, string $action, string $old_value, string $new_value): void {
+    $pdo->prepare(
+        "INSERT INTO ticket_audit (ticket_id, agent_id, action, old_value, new_value) VALUES (?, ?, ?, ?, ?)"
+    )->execute([$ticket_id, $agent_id, $action, $old_value, $new_value]);
 }

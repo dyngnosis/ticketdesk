@@ -33,3 +33,17 @@ function currentUserId(): int {
 function currentUsername(): string {
     return $_SESSION['username'] ?? '';
 }
+
+/**
+ * Returns true if the current user may read/write the given ticket.
+ * Admins can access any ticket; regular users only their own.
+ */
+function canAccessTicket(PDO $pdo, int $ticket_id): bool {
+    if (isAdmin()) {
+        return true;
+    }
+    $stmt = $pdo->prepare("SELECT user_id FROM tickets WHERE id = ?");
+    $stmt->execute([$ticket_id]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    return $row && (int)$row['user_id'] === currentUserId();
+}
