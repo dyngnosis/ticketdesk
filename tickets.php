@@ -222,6 +222,18 @@ if ($action === 'list') {
     $aStmt->execute([$id]);
     $attachments = $aStmt->fetchAll();
 
+    // Fetch time entries for this ticket (current user only)
+    $teStmt = $pdo->prepare("
+        SELECT te.*, u.username AS agent_name
+        FROM time_entries te
+        JOIN users u ON te.agent_id = u.id
+        WHERE te.ticket_id = ? AND te.agent_id = ?
+        ORDER BY te.started_at DESC
+    ");
+    $teStmt->execute([$id, currentUserId()]);
+    $timeEntries  = $teStmt->fetchAll();
+    $totalMinutes = array_sum(array_column($timeEntries, 'duration_minutes'));
+
     $pageTitle = "Ticket #$id";
     require __DIR__ . '/templates/header.php';
     ?>
@@ -287,6 +299,87 @@ if ($action === 'list') {
                     </form>
                 </div>
             </div>
+
+            <!-- ── Time Tracking ──────────────────────────────────────────── -->
+            <div class="card mt-4 shadow-sm" id="time-tracking-card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-stopwatch"></i> Time Tracking</span>
+                    <span class="badge bg-secondary" id="total-time-badge">
+                        <?php
+                        $totalHours = floor($totalMinutes / 60);
+                        $totalMins  = $totalMinutes % 60;
+                        echo $totalHours > 0
+                            ? "{$totalHours}h {$totalMins}m total"
+                            : "{$totalMins}m total";
+                        ?>
+                    </span>
+                </div>
+                <div class="card-body">
+
+                    <!-- Timer controls -->
+                    <div class="d-flex align-items-center gap-2 mb-3">
+                        <button class="btn btn-success btn-sm" id="btn-start-timer" onclick="startTimer()">
+                            <i class="bi bi-play-fill"></i> Start Timer
+                        </button>
+                        <button class="btn btn-danger btn-sm d-none" id="btn-stop-timer" onclick="stopTimer()">
+                            <i class="bi bi-stop-fill"></i> Stop Timer
+                        </button>
+                        <span class="text-muted small" id="timer-display"></span>
+                    </div>
+
+                    <!-- Manual entry form -->
+                    <form id="manual-entry-form" class="border-top pt-3">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-md-3">
+                                <label class="form-label form-label-sm mb-1">Duration (min)</label>
+                                <input type="number" id="entry-duration" class="form-control form-control-sm"
+                                       min="1" placeholder="e.g. 30" required>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label form-label-sm mb-1">Note</label>
+                                <input type="text" id="entry-note" class="form-control form-control-sm"
+                                       placeholder="What did you work on?">
+                            </div>
+                            <div class="col-md-3">
+                                <button type="button" class="btn btn-dark btn-sm w-100" onclick="logManualEntry()">
+                                    <i class="bi bi-plus-circle"></i> Log Time
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+
+                    <!-- Time log list -->
+                    <div class="mt-3" id="time-log-list">
+                    <?php if (empty($timeEntries)): ?>
+                        <p class="text-muted small mb-0" id="no-entries-msg">No time logged yet.</p>
+                    <?php else: ?>
+                        <?php foreach ($timeEntries as $te): ?>
+                        <div class="d-flex justify-content-between align-items-center border-top py-2 time-entry-row"
+                             data-entry-id="<?= (int)$te['id'] ?>">
+                            <div>
+                                <span class="fw-semibold small">
+                                    <?= $te['duration_minutes'] !== null
+                                        ? floor($te['duration_minutes'] / 60) . 'h ' . ($te['duration_minutes'] % 60) . 'm'
+                                        : '—' ?>
+                                </span>
+                                <?php if (!empty($te['note'])): ?>
+                                    <span class="text-muted small ms-2">— <?= htmlspecialchars($te['note']) ?></span>
+                                <?php endif; ?>
+                            </div>
+                            <div class="d-flex align-items-center gap-2">
+                                <small class="text-muted"><?= htmlspecialchars(substr($te['started_at'], 0, 16)) ?></small>
+                                <button class="btn btn-outline-secondary btn-sm py-0 px-1"
+                                        title="Edit"
+                                        onclick="editEntry(<?= (int)$te['id'] ?>, <?= (int)$te['duration_minutes'] ?>, <?= htmlspecialchars(json_encode($te['note'] ?? '')) ?>)">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+                    </div>
+                </div>
+            </div>
         </div>
 
         <div class="col-md-4">
@@ -342,6 +435,95 @@ if ($action === 'list') {
             </div>
         </div>
     </div>
+    <script>
+    const TICKET_ID = <?= (int)$id ?>;
+    let timerInterval = null;
+    let timerStartedAt = null;
+
+    function fmtMinutes(m) {
+        const h = Math.floor(m / 60), mm = m % 60;
+        return h > 0 ? `${h}h ${mm}m` : `${mm}m`;
+    }
+
+    function startTimer() {
+        timerStartedAt = new Date();
+        document.getElementById('btn-start-timer').classList.add('d-none');
+        document.getElementById('btn-stop-timer').classList.remove('d-none');
+        const display = document.getElementById('timer-display');
+        timerInterval = setInterval(() => {
+            const elapsed = Math.floor((new Date() - timerStartedAt) / 60000);
+            display.textContent = `Running: ${fmtMinutes(elapsed)}`;
+        }, 15000);
+        display.textContent = 'Running: 0m';
+    }
+
+    function stopTimer() {
+        clearInterval(timerInterval);
+        const durationMinutes = Math.max(1, Math.round((new Date() - timerStartedAt) / 60000));
+        document.getElementById('btn-stop-timer').classList.add('d-none');
+        document.getElementById('btn-start-timer').classList.remove('d-none');
+        document.getElementById('timer-display').textContent = '';
+
+        const note = prompt('Add a note for this session (optional):') ?? '';
+        createEntry(durationMinutes, note, timerStartedAt.toISOString().slice(0, 19).replace('T', ' '));
+        timerStartedAt = null;
+    }
+
+    function logManualEntry() {
+        const durInput = document.getElementById('entry-duration');
+        const duration = parseInt(durInput.value, 10);
+        if (isNaN(duration) || duration < 1) {
+            durInput.classList.add('is-invalid');
+            return;
+        }
+        durInput.classList.remove('is-invalid');
+        const note = document.getElementById('entry-note').value.trim();
+        createEntry(duration, note, null);
+        durInput.value = '';
+        document.getElementById('entry-note').value = '';
+    }
+
+    function createEntry(durationMinutes, note, startedAt) {
+        const payload = {
+            ticket_id:        TICKET_ID,
+            duration_minutes: durationMinutes,
+            note:             note,
+        };
+        if (startedAt) payload.started_at = startedAt;
+
+        fetch('/time_entry.php', {
+            method:  'POST',
+            headers: {'Content-Type': 'application/json'},
+            body:    JSON.stringify(payload),
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) location.reload();
+        })
+        .catch(() => alert('Failed to save time entry.'));
+    }
+
+    function editEntry(entryId, currentDuration, currentNote) {
+        const newDuration = parseInt(prompt('Duration (minutes):', currentDuration), 10);
+        if (isNaN(newDuration) || newDuration < 0) return;
+        const newNote = prompt('Note:', currentNote ?? '') ?? currentNote;
+
+        fetch('/time_entry.php', {
+            method:  'POST',
+            headers: {'Content-Type': 'application/json'},
+            body:    JSON.stringify({
+                entry_id:         entryId,
+                duration_minutes: newDuration,
+                note:             newNote,
+            }),
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) location.reload();
+        })
+        .catch(() => alert('Failed to update time entry.'));
+    }
+    </script>
     <?php require __DIR__ . '/templates/footer.php';
 } else {
     header('Location: /tickets.php');
