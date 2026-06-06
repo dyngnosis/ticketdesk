@@ -58,6 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_ticket'])) {
 
 // ── ADD COMMENT ──────────────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_comment'])) {
+    verify_csrf_token();
     $tid  = (int)($_POST['ticket_id'] ?? 0);
     $body = trim($_POST['body'] ?? '');
 
@@ -222,6 +223,20 @@ if ($action === 'list') {
     $aStmt->execute([$id]);
     $attachments = $aStmt->fetchAll();
 
+    // Fetch agent notes (internal notes only visible to agents)
+    $notes = [];
+    if (isAdmin()) {
+        $nStmt = $pdo->prepare("
+            SELECT n.*, u.username AS agent_name
+            FROM ticket_notes n
+            JOIN users u ON n.agent_id = u.id
+            WHERE n.ticket_id = ?
+            ORDER BY n.created_at ASC
+        ");
+        $nStmt->execute([$id]);
+        $notes = $nStmt->fetchAll();
+    }
+
     $pageTitle = "Ticket #$id";
     require __DIR__ . '/templates/header.php';
     ?>
@@ -233,6 +248,8 @@ if ($action === 'list') {
         <div class="alert alert-success alert-dismissible fade show">File uploaded successfully! <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
     <?php elseif ($msg === 'commented'): ?>
         <div class="alert alert-success alert-dismissible fade show">Comment added. <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+    <?php elseif ($msg === 'note_added'): ?>
+        <div class="alert alert-success alert-dismissible fade show">Internal note saved. <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
     <?php elseif ($error === 'too_large'): ?>
         <div class="alert alert-danger alert-dismissible fade show">File too large (max 10MB). <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
     <?php elseif ($error === 'upload_failed'): ?>
@@ -277,6 +294,7 @@ if ($action === 'list') {
                 <div class="card-header">Add a Comment</div>
                 <div class="card-body">
                     <form method="post">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(generate_csrf_token()) ?>">
                         <input type="hidden" name="ticket_id" value="<?= $id ?>">
                         <div class="mb-3">
                             <textarea name="body" class="form-control" rows="3" placeholder="Write your comment..." required></textarea>
@@ -287,6 +305,56 @@ if ($action === 'list') {
                     </form>
                 </div>
             </div>
+
+            <?php if (isAdmin()): ?>
+            <!-- Internal agent notes -->
+            <div class="card mt-4 shadow-sm border-warning">
+                <div class="card-header bg-warning bg-opacity-10 d-flex align-items-center gap-2">
+                    <i class="bi bi-lock-fill text-warning"></i>
+                    <strong>Internal Notes</strong>
+                    <span class="badge bg-warning text-dark ms-1">Agents only</span>
+                </div>
+                <div class="card-body">
+                    <?php if (empty($notes)): ?>
+                        <p class="text-muted small mb-3">No internal notes yet.</p>
+                    <?php else: ?>
+                        <?php foreach ($notes as $n): ?>
+                        <div class="card mb-2 border-warning">
+                            <div class="card-body py-2">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <strong><?= htmlspecialchars($n['agent_name']) ?></strong>
+                                        <?php if ($n['is_internal']): ?>
+                                        <span class="badge bg-warning text-dark ms-1">Internal</span>
+                                        <?php endif; ?>
+                                    </div>
+                                    <small class="text-muted"><?= htmlspecialchars($n['created_at']) ?></small>
+                                </div>
+                                <p class="mb-0 mt-1" style="white-space:pre-wrap"><?= htmlspecialchars($n['body']) ?></p>
+                            </div>
+                        </div>
+                        <?php endforeach; ?>
+                    <?php endif; ?>
+
+                    <form action="/ticket_note.php" method="post" class="mt-2">
+                        <input type="hidden" name="ticket_id" value="<?= $id ?>">
+                        <div class="mb-2">
+                            <textarea name="body" class="form-control form-control-sm" rows="3"
+                                      placeholder="Add an internal note visible only to agents..." required></textarea>
+                        </div>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <div class="form-check form-check-inline">
+                                <input class="form-check-input" type="checkbox" name="is_internal" id="is_internal" value="1" checked>
+                                <label class="form-check-label small" for="is_internal">Mark as internal</label>
+                            </div>
+                            <button type="submit" class="btn btn-warning btn-sm text-dark">
+                                <i class="bi bi-lock"></i> Save Note
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+            <?php endif; ?>
         </div>
 
         <div class="col-md-4">

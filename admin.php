@@ -8,6 +8,7 @@ $msg     = $_GET['msg']     ?? '';
 
 // ── HANDLE TICKET UPDATE ────────────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_ticket'])) {
+    verify_csrf_token();
     $tid       = (int)($_POST['ticket_id'] ?? 0);
     $status    = $_POST['status']      ?? '';
     $assigned  = (int)($_POST['assigned_to'] ?? 0);
@@ -269,6 +270,7 @@ $agents = $pdo->query("SELECT id, username FROM users WHERE role = 'admin' ORDER
                         <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                     </div>
                     <div class="modal-body">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(generate_csrf_token()) ?>">
                         <input type="hidden" name="ticket_id" id="modal_ticket_id">
                         <div class="mb-3">
                             <label class="form-label">Status</label>
