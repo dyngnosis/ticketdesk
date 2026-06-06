@@ -84,9 +84,23 @@ if ($action === 'list') {
     $pageTitle = 'My Tickets';
     require __DIR__ . '/templates/header.php';
 
-    $stmt = $pdo->prepare("SELECT * FROM tickets WHERE user_id = ? ORDER BY created_at DESC");
-    $stmt->execute([currentUserId()]);
+    $tagFilter = trim($_GET['tag'] ?? '');
+
+    $baseSql = "SELECT t.* FROM tickets t WHERE t.user_id = ?";
+    $params  = [currentUserId()];
+
+    if ($tagFilter !== '') {
+        $baseSql .= " AND EXISTS (SELECT 1 FROM ticket_tags tt JOIN tags tg ON tt.tag_id = tg.id WHERE tt.ticket_id = t.id AND tg.name = '{$tagFilter}')";
+    }
+
+    $baseSql .= " ORDER BY t.created_at DESC";
+
+    $stmt = $pdo->prepare($baseSql);
+    $stmt->execute($params);
     $tickets = $stmt->fetchAll();
+
+    // All tags for filter bar
+    $allTags = $pdo->query("SELECT * FROM tags ORDER BY name ASC")->fetchAll();
     ?>
     <div class="d-flex justify-content-between align-items-center mb-3">
         <h2><i class="bi bi-ticket-perforated"></i> My Tickets</h2>
@@ -95,19 +109,44 @@ if ($action === 'list') {
 
     <?php if ($msg === 'created'): ?>
         <div class="alert alert-success alert-dismissible fade show">Ticket created successfully! <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+    <?php elseif ($msg === 'tagged'): ?>
+        <div class="alert alert-success alert-dismissible fade show">Tag applied to ticket. <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+    <?php elseif ($msg === 'tag_removed'): ?>
+        <div class="alert alert-success alert-dismissible fade show">Tag removed from ticket. <button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+    <?php endif; ?>
+
+    <?php if (!empty($allTags)): ?>
+    <div class="mb-3 d-flex flex-wrap gap-1 align-items-center">
+        <small class="text-muted me-1"><i class="bi bi-funnel"></i> Filter by tag:</small>
+        <a href="/tickets.php" class="badge text-decoration-none <?= $tagFilter === '' ? 'bg-dark' : 'bg-secondary' ?>">All</a>
+        <?php foreach ($allTags as $tg): ?>
+            <a href="/tickets.php?tag=<?= urlencode($tg['name']) ?>"
+               class="badge text-decoration-none"
+               style="background-color:<?= htmlspecialchars($tg['color']) ?>; opacity:<?= $tagFilter === $tg['name'] ? '1' : '0.7' ?>">
+                <?= htmlspecialchars($tg['name']) ?>
+            </a>
+        <?php endforeach; ?>
+    </div>
     <?php endif; ?>
 
     <?php if (empty($tickets)): ?>
         <div class="card text-center py-5">
             <div class="card-body">
                 <i class="bi bi-inbox display-4 text-muted"></i>
-                <p class="mt-3 text-muted">You have no tickets yet.</p>
+                <p class="mt-3 text-muted"><?= $tagFilter ? 'No tickets found with that tag.' : 'You have no tickets yet.' ?></p>
+                <?php if (!$tagFilter): ?>
                 <a href="/tickets.php?action=new" class="btn btn-dark">Submit your first ticket</a>
+                <?php endif; ?>
             </div>
         </div>
     <?php else: ?>
         <div class="row g-3">
         <?php foreach ($tickets as $t): ?>
+            <?php
+            $tTagStmt = $pdo->prepare("SELECT tg.* FROM tags tg JOIN ticket_tags tt ON tg.id = tt.tag_id WHERE tt.ticket_id = ? ORDER BY tg.name ASC");
+            $tTagStmt->execute([$t['id']]);
+            $tTags = $tTagStmt->fetchAll();
+            ?>
             <div class="col-12">
                 <div class="card ticket-card priority-<?= htmlspecialchars($t['priority']) ?>">
                     <div class="card-body d-flex justify-content-between align-items-start">
@@ -121,6 +160,13 @@ if ($action === 'list') {
                                 <?= htmlspecialchars($t['category'] ?: 'Uncategorized') ?> &middot;
                                 Opened <?= htmlspecialchars($t['created_at']) ?>
                             </small>
+                            <?php if (!empty($tTags)): ?>
+                            <div class="mt-1">
+                                <?php foreach ($tTags as $tg): ?>
+                                    <span class="badge" style="background-color:<?= htmlspecialchars($tg['color']) ?>"><?= htmlspecialchars($tg['name']) ?></span>
+                                <?php endforeach; ?>
+                            </div>
+                            <?php endif; ?>
                         </div>
                         <div class="text-end">
                             <?= priorityBadge($t['priority']) ?>
@@ -222,6 +268,28 @@ if ($action === 'list') {
     $aStmt->execute([$id]);
     $attachments = $aStmt->fetchAll();
 
+    // Fetch tags on this ticket
+    $ticketTagStmt = $pdo->prepare("
+        SELECT tg.* FROM tags tg
+        JOIN ticket_tags tt ON tg.id = tt.tag_id
+        WHERE tt.ticket_id = ?
+        ORDER BY tg.name ASC
+    ");
+    $ticketTagStmt->execute([$id]);
+    $ticketTags = $ticketTagStmt->fetchAll();
+
+    // Fetch available tags not yet on this ticket (for assignment dropdown)
+    $assignedTagIds = array_column($ticketTags, 'id');
+    $availableTags  = [];
+    if (isAdmin()) {
+        $allTagsStmt = $pdo->query("SELECT * FROM tags ORDER BY name ASC");
+        foreach ($allTagsStmt->fetchAll() as $tg) {
+            if (!in_array($tg['id'], $assignedTagIds)) {
+                $availableTags[] = $tg;
+            }
+        }
+    }
+
     $pageTitle = "Ticket #$id";
     require __DIR__ . '/templates/header.php';
     ?>
@@ -302,6 +370,53 @@ if ($action === 'list') {
                     <li class="list-group-item d-flex justify-content-between"><span>Created</span><small><?= htmlspecialchars($ticket['created_at']) ?></small></li>
                     <li class="list-group-item d-flex justify-content-between"><span>Updated</span><small><?= htmlspecialchars($ticket['updated_at']) ?></small></li>
                 </ul>
+            </div>
+
+            <!-- Tags -->
+            <div class="card shadow-sm mb-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-tags"></i> Tags</span>
+                    <?php if (isAdmin()): ?>
+                    <a href="/tags.php" class="btn btn-sm btn-outline-dark" title="Manage tags"><i class="bi bi-gear"></i></a>
+                    <?php endif; ?>
+                </div>
+                <div class="card-body">
+                    <?php if (empty($ticketTags)): ?>
+                        <p class="text-muted small mb-2">No tags applied.</p>
+                    <?php else: ?>
+                        <div class="d-flex flex-wrap gap-1 mb-2">
+                        <?php foreach ($ticketTags as $tg): ?>
+                            <span class="badge d-inline-flex align-items-center gap-1"
+                                  style="background-color:<?= htmlspecialchars($tg['color']) ?>">
+                                <?= htmlspecialchars($tg['name']) ?>
+                                <?php if (isAdmin()): ?>
+                                <form method="post" action="/tags.php" class="d-inline m-0 p-0">
+                                    <input type="hidden" name="ticket_id" value="<?= $id ?>">
+                                    <input type="hidden" name="tag_id" value="<?= $tg['id'] ?>">
+                                    <button type="submit" name="remove_tag" class="btn btn-link p-0 m-0 text-white"
+                                            style="font-size:.7rem;line-height:1" title="Remove tag">&times;</button>
+                                </form>
+                                <?php endif; ?>
+                            </span>
+                        <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+
+                    <?php if (isAdmin() && !empty($availableTags)): ?>
+                    <form method="post" action="/tags.php" class="d-flex gap-1 mt-1">
+                        <input type="hidden" name="ticket_id" value="<?= $id ?>">
+                        <select name="tag_id" class="form-select form-select-sm">
+                            <option value="">Add a tag…</option>
+                            <?php foreach ($availableTags as $tg): ?>
+                            <option value="<?= $tg['id'] ?>"><?= htmlspecialchars($tg['name']) ?></option>
+                            <?php endforeach; ?>
+                        </select>
+                        <button type="submit" name="assign_tag" class="btn btn-dark btn-sm">
+                            <i class="bi bi-plus-lg"></i>
+                        </button>
+                    </form>
+                    <?php endif; ?>
+                </div>
             </div>
 
             <!-- Attachments -->
