@@ -50,6 +50,15 @@ $pdo->exec("
         size INTEGER,
         uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS ticket_notes (
+        id INTEGER PRIMARY KEY,
+        ticket_id INTEGER NOT NULL,
+        agent_id INTEGER NOT NULL,
+        body TEXT NOT NULL,
+        is_internal INTEGER NOT NULL DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
 ");
 
 // Seed admin user if no users exist
