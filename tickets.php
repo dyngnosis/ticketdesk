@@ -50,7 +50,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_ticket'])) {
     } else {
         $pdo->prepare("INSERT INTO tickets (user_id, title, description, priority, category) VALUES (?, ?, ?, ?, ?)")
             ->execute([currentUserId(), $title, $description, $priority, $category]);
-        $newId = $pdo->lastInsertId();
+        $newId = (int)$pdo->lastInsertId();
+        writeAuditEntry($pdo, $newId, currentUserId(), 'ticket_created', '', $title);
         header("Location: /tickets.php?action=view&id={$newId}&msg=created");
         exit;
     }
@@ -303,6 +304,17 @@ if ($action === 'list') {
                     <li class="list-group-item d-flex justify-content-between"><span>Updated</span><small><?= htmlspecialchars($ticket['updated_at']) ?></small></li>
                 </ul>
             </div>
+
+            <!-- Audit trail shortcut (admin only) -->
+            <?php if (isAdmin()): ?>
+            <div class="card shadow-sm mb-3">
+                <div class="card-body py-2 text-center">
+                    <a href="/ticket_audit.php?ticket_id=<?= $id ?>" class="btn btn-sm btn-outline-secondary w-100">
+                        <i class="bi bi-clock-history"></i> View Audit Trail
+                    </a>
+                </div>
+            </div>
+            <?php endif; ?>
 
             <!-- Attachments -->
             <div class="card shadow-sm mb-3">
